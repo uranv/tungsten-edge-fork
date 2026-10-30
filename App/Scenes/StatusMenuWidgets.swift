@@ -242,16 +242,18 @@ final class PreferenceSliderMenuItemView: NSView {
 /// Taskbar height row: Small — slider — Large. Live while the mouse is down: every whole point
 /// goes out through `onHeightChange`, bracketed by `onEditingChanged` so the bars resize inside
 /// one height-resize transaction (`size-tiers.md`).
+/// 本次复用该行调节标题宽度：范围由调用方传入，`onHeightChange` 改为 `onValueChange`；
+/// Dock 高度仍由调用方转换为 DockPanelHeight，并保留 onEditingChanged 的事务边界。
 @MainActor
 final class TaskbarSizeMenuItemView: NSView {
     var onEditingChanged: ((Bool) -> Void)?
-    var onHeightChange: ((DockPanelHeight) -> Void)?
+    var onValueChange: ((CGFloat) -> Void)?
 
     private let smallLabel = NSTextField(labelWithString: String(localized: "Small"))
     private let largeLabel = NSTextField(labelWithString: String(localized: "Large"))
     private let slider = MenuTrackingSlider()
 
-    init(accessibilityTitle: String) {
+    init(accessibilityTitle: String, range: ClosedRange<CGFloat>) {
         super.init(frame: NSRect(x: 0, y: 0, width: 300, height: 32))
         autoresizingMask = [.width]
 
@@ -263,8 +265,8 @@ final class TaskbarSizeMenuItemView: NSView {
             addSubview(label)
         }
 
-        slider.minValue = Double(DockPanelHeight.minimum)
-        slider.maxValue = Double(DockPanelHeight.maximum)
+        slider.minValue = Double(range.lowerBound)
+        slider.maxValue = Double(range.upperBound)
         slider.isContinuous = true
         slider.target = self
         slider.action = #selector(sliderChanged)
@@ -272,7 +274,7 @@ final class TaskbarSizeMenuItemView: NSView {
         slider.onTrackingEnded = { [weak self] in self?.onEditingChanged?(false) }
         slider.setAccessibilityLabel(accessibilityTitle)
         addSubview(slider)
-        sync(height: .default)
+        sync(value: range.lowerBound)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -286,9 +288,13 @@ final class TaskbarSizeMenuItemView: NSView {
         }
     }
 
-    func sync(height: DockPanelHeight) {
-        slider.doubleValue = Double(height.points)
-        slider.displayString = "\(Int(height.points))"
+    func updateAccessibilityTitle(_ title: String) {
+        slider.setAccessibilityLabel(title)
+    }
+
+    func sync(value: CGFloat) {
+        slider.doubleValue = Double(value)
+        slider.displayString = "\(Int(value))"
     }
 
     override func layout() {
@@ -307,9 +313,9 @@ final class TaskbarSizeMenuItemView: NSView {
     }
 
     @objc private func sliderChanged(_ sender: NSSlider) {
-        let height = DockPanelHeight(clamping: CGFloat(sender.doubleValue))
-        slider.displayString = "\(Int(height.points))"
-        onHeightChange?(height)
+        let value = CGFloat(sender.doubleValue.rounded())
+        sync(value: value)
+        onValueChange?(value)
     }
 }
 

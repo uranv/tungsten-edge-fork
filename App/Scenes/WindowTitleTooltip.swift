@@ -15,9 +15,11 @@ import SwiftUI
 enum WindowTitleTextMetrics {
     /// 条内标题的最大宽度（中档基线）。任务条缩放后一律走 `maximumWidth(for:)`，
     /// 别在调用点另写一份字面值——两处各走各的曾经让药丸和判定对不上。
+    // 本次新增可调范围下限；原 140pt 保留为上限和默认值，实际选择由参数传入。
+    static let minimumWidth: CGFloat = 40
     static let maximumWidth: CGFloat = 140
 
-    static func maximumWidth(for scale: CGFloat) -> CGFloat { maximumWidth * scale }
+    static func maximumWidth(for scale: CGFloat, maximumWidth: CGFloat) -> CGFloat { maximumWidth * scale }
 
     static func font(scale: CGFloat) -> NSFont {
         let size = max(10, 12 * scale)
@@ -204,24 +206,27 @@ enum ChipPillMetrics {
     /// `ChipView.multiWindowChip` 用它给标签一个**显式**宽度，而不是让 `Text` 自己撑——
     /// 标签变长变短时这个宽度随任务条布局动画插值，文字本身按身份换、不在中间宽度上重排。
     /// 也因此渲染出来的药丸宽度与下面 `width(title:scale:)` 逐 pt 一致。
-    static func labelWidth(title: String, scale: CGFloat) -> CGFloat {
-        ceil(min(
+    static func labelWidth(title: String, scale: CGFloat, fixedWidth: Bool, maximumWidth: CGFloat) -> CGFloat {
+        // 本次仅在原宽度计算中增加固定分支：固定到同一缩放上限，否则沿用按文字宽度收缩。
+        let limit = WindowTitleTextMetrics.maximumWidth(for: scale, maximumWidth: maximumWidth)
+        return ceil(fixedWidth ? limit : min(
             WindowTitleTextMetrics.intrinsicWidth(of: title, scale: scale),
-            WindowTitleTextMetrics.maximumWidth(for: scale)
+            limit
         ))
     }
 
     /// 标题是否超过上限、需要截断。超过时 `Text` 拿到的是上限宽度并自己加省略号；
     /// 没超过时 `Text` 按自然宽度画（不给它定宽——SwiftUI 量出的文字宽可能比 AppKit 多零点几 pt，
     /// 定宽会把最后一个字吞成省略号）。
-    static func labelTruncates(title: String, scale: CGFloat) -> Bool {
+    static func labelTruncates(title: String, scale: CGFloat, maximumWidth: CGFloat) -> Bool {
         WindowTitleTextMetrics.intrinsicWidth(of: title, scale: scale)
-            > WindowTitleTextMetrics.maximumWidth(for: scale)
+            > WindowTitleTextMetrics.maximumWidth(for: scale, maximumWidth: maximumWidth)
     }
 
     /// 药丸宽度 = 左右内边距 + 图标槽 + 间距 + 标签盒宽度。
-    static func width(title: String, scale: CGFloat) -> CGFloat {
-        (2 * horizontalPadding + iconSlot + iconSpacing) * scale + labelWidth(title: title, scale: scale)
+    static func width(title: String, scale: CGFloat, fixedWidth: Bool, maximumWidth: CGFloat) -> CGFloat {
+        (2 * horizontalPadding + iconSlot + iconSpacing) * scale
+            + labelWidth(title: title, scale: scale, fixedWidth: fixedWidth, maximumWidth: maximumWidth)
     }
 
     /// 由稳定的卡片屏幕矩形推出药丸屏幕矩形（macOS 屏幕坐标 y 向上）。
@@ -229,11 +234,13 @@ enum ChipPillMetrics {
     static func pillRect(
         inCard card: CGRect,
         title: String,
-        scale: CGFloat
+        scale: CGFloat,
+        fixedWidth: Bool,
+        maximumWidth: CGFloat
     ) -> CGRect {
         let pillHeight = height(scale: scale)
         let topY = card.maxY - boxTopInset * scale
-        let pillWidth = width(title: title, scale: scale)
+        let pillWidth = width(title: title, scale: scale, fixedWidth: fixedWidth, maximumWidth: maximumWidth)
         return CGRect(
             x: card.midX - pillWidth / 2,
             y: topY - pillHeight,

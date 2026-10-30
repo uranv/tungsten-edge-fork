@@ -31,11 +31,11 @@ final class WindowTitleTooltipTests: XCTestCase {
         // 「看着截断了却不弹 tooltip」（或反之）。这一条只管**条内**那段文字；
         // 气泡自己的缩放锁在 `testMediumTierKeepsTheNativePixelsAndOtherTiersScaleWholesale`。
         for tier in sampleDockHeights {
-            XCTAssertEqual(WindowTitleTextMetrics.maximumWidth(for: tier.scale),
+            XCTAssertEqual(WindowTitleTextMetrics.maximumWidth(for: tier.scale, maximumWidth: 140),
                            WindowTitleTextMetrics.maximumWidth * tier.scale, accuracy: 0.001)
         }
         // 中档必须与历史字面值一致。
-        XCTAssertEqual(WindowTitleTextMetrics.maximumWidth(for: 1.0), 140)
+        XCTAssertEqual(WindowTitleTextMetrics.maximumWidth(for: 1.0, maximumWidth: 140), 140)
     }
 
     // 截断判定（`isTruncated` / `needsTooltip`）连同它的三条测试于 2026-08-17 删除：
@@ -114,13 +114,52 @@ final class LabelWidthAnimationTests: XCTestCase {
 /// 探针改量卡片矩形之后，tooltip 的锚点契约（pill rect）靠这组常量推出来，
 /// 所以推导必须与渲染用的是同一份数值。
 final class ChipPillMetricsTests: XCTestCase {
+    func testFixedTitleWidthUsesTheSelectedMaximumAtEveryScale() {
+        let long = String(repeating: "very-long-window-title-", count: 20)
+        for maximum in [CGFloat(40), 90, 140] {
+            for scale in [CGFloat(0.5), 1, 1.5] {
+                let expected = ceil(maximum * scale)
+                for title in ["A", long] {
+                    XCTAssertEqual(ChipPillMetrics.labelWidth(title: title, scale: scale,
+                                                              fixedWidth: true, maximumWidth: maximum), expected)
+                    XCTAssertEqual(ChipPillMetrics.width(title: title, scale: scale,
+                                                        fixedWidth: true, maximumWidth: maximum),
+                                   48 * scale + expected)
+                }
+            }
+        }
+    }
+
+    func testVariableTitleWidthCapsLongTitlesAndKeepsShortTitlesCompact() {
+        let long = String(repeating: "very-long-window-title-", count: 20)
+        for maximum in [CGFloat(40), 90, 140] {
+            for scale in [CGFloat(0.5), 1, 1.5] {
+                let limit = ceil(maximum * scale)
+                XCTAssertLessThan(ChipPillMetrics.labelWidth(title: "A", scale: scale,
+                                                            fixedWidth: false, maximumWidth: maximum), limit)
+                XCTAssertEqual(ChipPillMetrics.labelWidth(title: long, scale: scale,
+                                                         fixedWidth: false, maximumWidth: maximum), limit)
+                XCTAssertFalse(ChipPillMetrics.labelTruncates(title: "A", scale: scale, maximumWidth: maximum))
+                XCTAssertTrue(ChipPillMetrics.labelTruncates(title: long, scale: scale, maximumWidth: maximum))
+            }
+        }
+    }
+
+    func testPillRectUsesConfiguredFixedTitleWidth() {
+        let card = CGRect(x: 100, y: 200, width: 300, height: 81)
+        let rect = ChipPillMetrics.pillRect(inCard: card, title: "A", scale: 1.5,
+                                          fixedWidth: true, maximumWidth: 90)
+        XCTAssertEqual(rect.width, 48 * 1.5 + 135)
+        XCTAssertEqual(rect.midX, card.midX)
+    }
+
     func testWidthMatchesTheRenderedComposition() {
         let title = "psd-文件"
         let scale: CGFloat = 1
         let titleWidth = min(WindowTitleTextMetrics.intrinsicWidth(of: title, scale: scale),
-                             WindowTitleTextMetrics.maximumWidth(for: scale))
+                             WindowTitleTextMetrics.maximumWidth(for: scale, maximumWidth: 140))
         let expected = (2 * 10 + 22 + 6) * scale + ceil(titleWidth)
-        XCTAssertEqual(ChipPillMetrics.width(title: title, scale: scale), expected, accuracy: 0.001)
+        XCTAssertEqual(ChipPillMetrics.width(title: title, scale: scale, fixedWidth: false, maximumWidth: 140), expected, accuracy: 0.001)
     }
 
     /// 标签盒宽度是渲染与推导的公共来源：向上取整的受限标题宽，`width` 只在它外面加常量。
@@ -129,24 +168,24 @@ final class ChipPillMetricsTests: XCTestCase {
         let long = String(repeating: "very-long-window-title-", count: 20)
         for scale in [CGFloat(0.85), 1, 1.15, 1.3] {
             let intrinsic = WindowTitleTextMetrics.intrinsicWidth(of: title, scale: scale)
-            XCTAssertEqual(ChipPillMetrics.labelWidth(title: title, scale: scale),
-                           ceil(min(intrinsic, WindowTitleTextMetrics.maximumWidth(for: scale))), accuracy: 0.001)
-            XCTAssertEqual(ChipPillMetrics.labelWidth(title: long, scale: scale),
-                           ceil(WindowTitleTextMetrics.maximumWidth(for: scale)), accuracy: 0.001)
-            XCTAssertFalse(ChipPillMetrics.labelTruncates(title: title, scale: scale))
-            XCTAssertTrue(ChipPillMetrics.labelTruncates(title: long, scale: scale))
-            XCTAssertEqual(ChipPillMetrics.width(title: long, scale: scale)
-                               - ChipPillMetrics.width(title: title, scale: scale),
-                           ChipPillMetrics.labelWidth(title: long, scale: scale)
-                               - ChipPillMetrics.labelWidth(title: title, scale: scale), accuracy: 0.001)
+            XCTAssertEqual(ChipPillMetrics.labelWidth(title: title, scale: scale, fixedWidth: false, maximumWidth: 140),
+                           ceil(min(intrinsic, WindowTitleTextMetrics.maximumWidth(for: scale, maximumWidth: 140))), accuracy: 0.001)
+            XCTAssertEqual(ChipPillMetrics.labelWidth(title: long, scale: scale, fixedWidth: false, maximumWidth: 140),
+                           ceil(WindowTitleTextMetrics.maximumWidth(for: scale, maximumWidth: 140)), accuracy: 0.001)
+            XCTAssertFalse(ChipPillMetrics.labelTruncates(title: title, scale: scale, maximumWidth: 140))
+            XCTAssertTrue(ChipPillMetrics.labelTruncates(title: long, scale: scale, maximumWidth: 140))
+            XCTAssertEqual(ChipPillMetrics.width(title: long, scale: scale, fixedWidth: false, maximumWidth: 140)
+                               - ChipPillMetrics.width(title: title, scale: scale, fixedWidth: false, maximumWidth: 140),
+                           ChipPillMetrics.labelWidth(title: long, scale: scale, fixedWidth: false, maximumWidth: 140)
+                               - ChipPillMetrics.labelWidth(title: title, scale: scale, fixedWidth: false, maximumWidth: 140), accuracy: 0.001)
         }
     }
 
     func testWidthIsCappedByTheTitleMaximum() {
         let long = String(repeating: "very-long-window-title-", count: 20)
         let scale: CGFloat = 1
-        let expected = (2 * 10 + 22 + 6) * scale + ceil(WindowTitleTextMetrics.maximumWidth(for: scale))
-        XCTAssertEqual(ChipPillMetrics.width(title: long, scale: scale), expected, accuracy: 0.001)
+        let expected = (2 * 10 + 22 + 6) * scale + ceil(WindowTitleTextMetrics.maximumWidth(for: scale, maximumWidth: 140))
+        XCTAssertEqual(ChipPillMetrics.width(title: long, scale: scale, fixedWidth: false, maximumWidth: 140), expected, accuracy: 0.001)
     }
 
     // MARK: - 安静档悬停放大：按卡宽收敛
@@ -186,7 +225,7 @@ final class ChipPillMetricsTests: XCTestCase {
     func testTwoWidestTitledCardsStillLeaveAVisibleGap() {
         let scale: CGFloat = 1
         let longTitle = String(repeating: "very-long-window-title-", count: 20)
-        let cardWidth = ChipPillMetrics.width(title: longTitle, scale: scale)
+        let cardWidth = ChipPillMetrics.width(title: longTitle, scale: scale, fixedWidth: false, maximumWidth: 140)
             + 2 * ChipPillMetrics.titledCardInset * scale
         let restingGap = 2 * ChipPillMetrics.titledCardInset * scale + 2 /* Style.chipSpacing */
         let s = ChipPillMetrics.quietHoverScale(forCardWidth: cardWidth, scale: scale)
@@ -218,14 +257,14 @@ final class ChipPillMetricsTests: XCTestCase {
     /// 药丸在卡内水平居中 → midX 直接沿用卡片的；竖向全部来自常量。
     func testPillRectIsHorizontallyCenteredOnTheCard() {
         let card = CGRect(x: 100, y: 200, width: 180, height: 52)
-        let rect = ChipPillMetrics.pillRect(inCard: card, title: "psd-文件", scale: 1)
+        let rect = ChipPillMetrics.pillRect(inCard: card, title: "psd-文件", scale: 1, fixedWidth: false, maximumWidth: 140)
         XCTAssertEqual(rect.midX, card.midX, accuracy: 0.001)
     }
 
     /// 屏幕坐标 y 向上：静息态药丸顶边 = 卡片顶边下方 `boxTopInset`。
     func testRestPillRectSitsBoxTopInsetBelowTheCardTop() {
         let card = CGRect(x: 0, y: 0, width: 180, height: ChipPillMetrics.chipHeight)
-        let rect = ChipPillMetrics.pillRect(inCard: card, title: "psd-文件", scale: 1)
+        let rect = ChipPillMetrics.pillRect(inCard: card, title: "psd-文件", scale: 1, fixedWidth: false, maximumWidth: 140)
         XCTAssertEqual(rect.maxY, card.maxY - ChipPillMetrics.boxTopInset, accuracy: 0.001)
         XCTAssertEqual(rect.height, 34, accuracy: 0.001)
     }

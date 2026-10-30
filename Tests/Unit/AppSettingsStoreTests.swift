@@ -3,6 +3,45 @@ import XCTest
 
 @MainActor
 final class AppSettingsStoreTests: XCTestCase {
+    func testTitleWidthDefaultsAndPreferencesPersistIndependently() {
+        let defaults = makeDefaults()
+        let store = AppSettingsStore(defaults: defaults)
+        XCTAssertFalse(store.titleFixedWidth)
+        XCTAssertEqual(store.titleMaximumWidth, 140)
+
+        store.setTitleFixedWidth(true)
+        store.setTitleMaximumWidth(90)
+        let reloaded = AppSettingsStore(defaults: defaults)
+        XCTAssertTrue(reloaded.titleFixedWidth)
+        XCTAssertEqual(reloaded.titleMaximumWidth, 90)
+
+        reloaded.setTitleFixedWidth(false)
+        let variable = AppSettingsStore(defaults: defaults)
+        XCTAssertFalse(variable.titleFixedWidth)
+        XCTAssertEqual(variable.titleMaximumWidth, 90)
+    }
+
+    func testTitleMaximumWidthClampsAndRoundsBeforePersisting() {
+        let defaults = makeDefaults()
+        let store = AppSettingsStore(defaults: defaults)
+        let cases: [(CGFloat, CGFloat)] = [(20, 40), (180, 140), (89.6, 90)]
+        for (input, expected) in cases {
+            store.setTitleMaximumWidth(input)
+            XCTAssertEqual(store.titleMaximumWidth, expected)
+            XCTAssertEqual(AppSettingsStore(defaults: defaults).titleMaximumWidth, expected)
+        }
+    }
+
+    func testStoredTitleMaximumWidthIsClampedOnLoad() {
+        let defaults = makeDefaults()
+        let cases: [(Double, CGFloat)] = [(20, 40), (180, 140)]
+        for (stored, expected) in cases {
+            defaults.set(stored, forKey: "com.tungsten.edge.titleMaximumWidth")
+            XCTAssertEqual(AppSettingsStore(defaults: defaults).titleMaximumWidth, expected)
+            XCTAssertEqual(defaults.double(forKey: "com.tungsten.edge.titleMaximumWidth"), Double(expected))
+        }
+    }
+
     func testTrashDefaultsIgnoreLegacyKeyAndPersistIndependently() {
         let defaults = makeDefaults()
         defaults.set(false, forKey: "com.tungsten.edge.trash.visible")
@@ -843,9 +882,10 @@ final class AppSettingsStoreTests: XCTestCase {
 
     @MainActor
     func testTaskbarSizeSliderSpansTheHeightRangeAndReportsWholePoints() {
-        let view = TaskbarSizeMenuItemView(accessibilityTitle: "Taskbar Size")
+        let view = TaskbarSizeMenuItemView(accessibilityTitle: "Taskbar Size",
+                                           range: DockPanelHeight.minimum...DockPanelHeight.maximum)
         var heights: [DockPanelHeight] = []
-        view.onHeightChange = { heights.append($0) }
+        view.onValueChange = { heights.append(DockPanelHeight(clamping: $0)) }
         guard let slider = view.subviews.compactMap({ $0 as? NSSlider }).first else {
             return XCTFail("the row must hold a slider")
         }
@@ -853,13 +893,34 @@ final class AppSettingsStoreTests: XCTestCase {
         XCTAssertEqual(slider.minValue, Double(DockPanelHeight.minimum))
         XCTAssertEqual(slider.maxValue, Double(DockPanelHeight.maximum))
 
-        view.sync(height: DockPanelHeight(clamping: 70))
+        view.sync(value: 70)
         XCTAssertEqual(slider.doubleValue, 70)
         XCTAssertTrue(heights.isEmpty, "syncing from the store must not write back")
 
         slider.doubleValue = 61.6
         _ = slider.sendAction(slider.action, to: slider.target)
         XCTAssertEqual(heights, [DockPanelHeight(clamping: 62)])
+    }
+
+    @MainActor
+    func testTitleWidthSliderReusesTheSmallLargeRowAndReportsWholePoints() {
+        let view = TaskbarSizeMenuItemView(accessibilityTitle: "Maximum Window Chip Width", range: 40...140)
+        var widths: [CGFloat] = []
+        view.onValueChange = { widths.append($0) }
+        guard let slider = view.subviews.compactMap({ $0 as? NSSlider }).first else {
+            return XCTFail("the row must hold a slider")
+        }
+        XCTAssertEqual(slider.minValue, 40)
+        XCTAssertEqual(slider.maxValue, 140)
+        XCTAssertEqual(view.subviews.compactMap { ($0 as? NSTextField)?.stringValue },
+                       [String(localized: "Small"), String(localized: "Large")])
+
+        view.sync(value: 90)
+        XCTAssertTrue(widths.isEmpty)
+        slider.doubleValue = 89.6
+        _ = slider.sendAction(slider.action, to: slider.target)
+        XCTAssertEqual(widths, [90])
+        XCTAssertEqual(slider.accessibilityValue() as? String, "90")
     }
 
     @MainActor

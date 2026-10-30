@@ -109,6 +109,9 @@ final class AppSettingsStore: ObservableObject {
     @Published private(set) var frontWindowBar: Bool
     /// 任务条尺寸档位。面板几何与条内所有 chip 尺寸都由它派生。
     @Published private(set) var dockPanelHeight: DockPanelHeight
+    /// 本次新增：固定时标题区域占满已设上限；宽度按 scale = 1 保存，默认关闭、上限 140pt。
+    @Published private(set) var titleFixedWidth: Bool
+    @Published private(set) var titleMaximumWidth: CGFloat
     /// 悬停效果档位。只影响条内 chip 的悬停视觉，静息布局逐像素不变（因此无需 relayout）。
     @Published private(set) var hoverStyle: HoverStyle
     /// 最大化窗口避让任务条（菜单「最大化窗口避开任务条」）。
@@ -175,6 +178,7 @@ final class AppSettingsStore: ObservableObject {
             Keys.showShelf: true,
             Keys.showTrash: true,
             Keys.frontWindowBar: false,
+            Keys.titleFixedWidth: false,
             Keys.fullscreenIntentEnabled: true,
             Keys.nativeDockAutoHideDelay: Self.defaultNativeDockAutoHideDelay,
             // 首次安装 = 常驻；remembered 的种子仍是有限档，见常量注释。
@@ -230,6 +234,11 @@ final class AppSettingsStore: ObservableObject {
         // never written or removed, so a rollback still finds it). Corrupt values fall back to
         // the native height and are rewritten immediately, like every other key here.
         dockPanelHeight = Self.storedDockPanelHeight(defaults: defaults)
+        titleFixedWidth = defaults.bool(forKey: Keys.titleFixedWidth)
+        titleMaximumWidth = Self.sanitizedTitleMaximumWidth(CGFloat(
+            Self.storedNumericValue(defaults.object(forKey: Keys.titleMaximumWidth))
+                ?? Double(WindowTitleTextMetrics.maximumWidth)
+        ))
         hoverStyle = HoverStyle(rawValue: defaults.string(forKey: Keys.hoverStyle) ?? "") ?? .default
         let nativeDelay = Self.sanitizedStoredDelay(
             defaults.object(forKey: Keys.nativeDockAutoHideDelay),
@@ -258,6 +267,7 @@ final class AppSettingsStore: ObservableObject {
             lastEnabledEdgeAutoHideDelay = edgeDelay
         }
         defaults.set(Double(dockPanelHeight.points), forKey: Keys.dockPanelHeight)
+        defaults.set(Double(titleMaximumWidth), forKey: Keys.titleMaximumWidth)
         defaults.set(hoverStyle.rawValue, forKey: Keys.hoverStyle)
         defaults.set(nativeDelay, forKey: Keys.nativeDockAutoHideDelay)
         defaults.set(lastEnabledNativeDockAutoHideDelay, forKey: Keys.nativeDockAutoHideLastEnabledDelay)
@@ -271,6 +281,19 @@ final class AppSettingsStore: ObservableObject {
         guard dockPanelHeight != value else { return }
         dockPanelHeight = value
         defaults.set(Double(value.points), forKey: Keys.dockPanelHeight)
+    }
+
+    func setTitleFixedWidth(_ value: Bool) {
+        guard titleFixedWidth != value else { return }
+        titleFixedWidth = value
+        defaults.set(value, forKey: Keys.titleFixedWidth)
+    }
+
+    func setTitleMaximumWidth(_ value: CGFloat) {
+        let width = Self.sanitizedTitleMaximumWidth(value)
+        guard titleMaximumWidth != width else { return }
+        titleMaximumWidth = width
+        defaults.set(Double(width), forKey: Keys.titleMaximumWidth)
     }
 
     /// 只应由 `SettingsCoordinator.applyEdgeToggleShortcut` 在**注册成功后**调用（见属性注释）。
@@ -527,6 +550,11 @@ final class AppSettingsStore: ObservableObject {
         DefaultsValueParsing.finiteNumericValue(value)
     }
 
+    private static func sanitizedTitleMaximumWidth(_ value: CGFloat) -> CGFloat {
+        guard value.isFinite else { return WindowTitleTextMetrics.maximumWidth }
+        return min(max(value.rounded(), WindowTitleTextMetrics.minimumWidth), WindowTitleTextMetrics.maximumWidth)
+    }
+
     private static func storedDockPanelHeight(defaults: UserDefaults) -> DockPanelHeight {
         if let stored = storedNumericValue(defaults.object(forKey: Keys.dockPanelHeight)) {
             return DockPanelHeight(clamping: CGFloat(stored))
@@ -554,6 +582,8 @@ private enum Keys {
     static let frontWindowBar = "com.tungsten.edge.frontWindowBar"
     /// Continuous bar height in points (since the drag-to-resize release).
     static let dockPanelHeight = "com.tungsten.edge.dockPanelHeight"
+    static let titleFixedWidth = "com.tungsten.edge.titleFixedWidth"
+    static let titleMaximumWidth = "com.tungsten.edge.titleMaximumWidth"
     /// Legacy four-tier raw string. **Read once for migration, never written or removed.**
     static let dockSize = "com.tungsten.edge.dockSize"
     static let hoverStyle = "com.tungsten.edge.hoverStyle"

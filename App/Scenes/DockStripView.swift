@@ -120,8 +120,14 @@ struct DockStripView: View {
     // body 里两者不等 = 这次 `layoutKeys` 变化就是空位合拢 / 重开，条内动画要和面板窗口动画**同一条曲线
     // 同一时长**——弹簧（0.28s）叠在 AppKit easeInEaseOut（0.22s）上，图标相对底板忽前忽后，就是 owner
     // 2026-09-03 录屏里「没有原生丝滑」的那一下。
+    private struct LabelWidths: Equatable {
+        let scale: CGFloat
+        let values: [String: CGFloat]
+    }
     /// 上一轮已渲染的标签表：算这次标签变化让内容总宽变了多少（只算真的画出标题的卡，形态 `.multi`）。
-    @State private var renderedLabelTitles: [String: String] = [:]
+    /// 本次改存实际宽度，覆盖固定宽度、上限设置和消息应用弹出窗口；以 scale 区分 Dock 高度变化。
+    /// Last rendered widths and scale: title/settings changes follow; bar-height changes do not.
+    @State private var renderedLabelWidths: LabelWidths?
 
     /// 中转格 frame（"strip" 空间）。**独立上报,不塞进 folderChipFrames**（评审：那个字典专属
     /// 文件夹 chip,后续还喂文件夹重排 hit-test,不能混 sentinel）。喂中转弹窗锚点 + drop 路由。
@@ -200,9 +206,26 @@ struct DockStripView: View {
     /// so the card's first render already carries the mark; `markLandingEntries` removes it.
     @State var landingEntryIDs: Set<String> = []
 
+    private func labelWidths(for projection: StripProjection) -> LabelWidths {
+        var widths: [String: CGFloat] = [:]
+        for case let .window(item) in projection.entries {
+            let messagingWindow = !item.isAppLevelFallback
+                && item.bundleIdentifier.map { messagingStore.contains($0) } == true
+            guard item.showsTitle || messagingWindow else { continue }
+            widths[item.id] = ChipPillMetrics.labelWidth(
+                title: projection.labelTitleByChipID[item.id] ?? item.title,
+                scale: dockScale,
+                fixedWidth: settingsStore.titleFixedWidth,
+                maximumWidth: settingsStore.titleMaximumWidth
+            )
+        }
+        return LabelWidths(scale: dockScale, values: widths)
+    }
+
     var body: some View {
         let projectionStart = HoverTrace.now()
         let projection = makeProjection()
+        let labelWidths = labelWidths(for: projection)
         let _ = StripProjectionRegistry.shared.store(projection, surface: stripSurfaceID, displayUUID: displayUUID)
         let _ = HoverTrace.span("makeProjection", since: projectionStart)
         // 「一次点击让整条重算了几次」——`DockStripView` 订阅整个 `AppRuntime`，
@@ -245,19 +268,18 @@ struct DockStripView: View {
                 // 真实布局宽，邻卡随之重排）；这一层只负责通知面板开始逐帧跟随，外加起步探针。
                 // 同一轮更新里让面板起步（理由见 `onLabelWidthChange`）。探针行留着：和面板那侧
                 // `relayout` 的时间戳对着看，差值就是内容与底板起步相差多少（`DOCK_HOVER_TRACE=1`）。
-                .onChange(of: projection.labelTitleByChipID) { newTitles in
+                .onChange(of: labelWidths) { next in
+                    defer { renderedLabelWidths = next }
+                    guard let previous = renderedLabelWidths,
+                          previous.scale == next.scale,
+                          !isPanelHeightResizing else { return }
                     HoverTrace.action("labelChange", phase: "swiftui")
-                    let titled = Set(projection.layoutKeys.filter { $0.form == .multi }.map(\.id))
-                    var starting: [String: CGFloat] = [:]
-                    for id in titled {
-                        guard let new = newTitles[id], let old = renderedLabelTitles[id], new != old else { continue }
-                        let from = ChipPillMetrics.labelWidth(title: old, scale: dockScale)
-                        if from != ChipPillMetrics.labelWidth(title: new, scale: dockScale) { starting[id] = from }
+                    let starting = previous.values.filter { id, width in
+                        next.values[id].map { $0 != width } ?? false
                     }
-                    renderedLabelTitles = newTitles
                     if !starting.isEmpty { onLabelWidthChange(starting) }
                 }
-                .onAppear { renderedLabelTitles = projection.labelTitleByChipID }
+                .onAppear { renderedLabelWidths = labelWidths }
                 .environment(\.labelBoxWidthTick, onLabelBoxWidthTick)
                 .environment(\.chipPillUsesGlass, usesLiquidGlass)
             }

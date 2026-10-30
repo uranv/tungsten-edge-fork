@@ -76,15 +76,25 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     /// 显示前（`prepareMenuForPresentation`）建好。
     private let taskbarScreenMenu = NSMenu()
     /// 下面四条是普通勾选项，**恒在**（菜单开着时不许增删行），勾选状态由 refreshCheckmarks 落。
+    /// 本次新增「固定宽度」，与原四项一样始终保留在菜单中。
     private let showShelfItem = NSMenuItem(title: String(localized: "Show Shelf"), action: #selector(toggleShowShelf), keyEquivalent: "")
     private let showTrashItem = NSMenuItem(title: String(localized: "Show Trash"), action: #selector(toggleShowTrash), keyEquivalent: "")
+    private let fixedWidthItem = NSMenuItem(title: String(localized: "Fixed Window Chip Width"), action: #selector(toggleTitleFixedWidth), keyEquivalent: "")
     private let hoverNameItem = NSMenuItem(title: String(localized: "Show app name on hover"), action: #selector(toggleHoverName), keyEquivalent: "")
     private let windowLiftItem = NSMenuItem(title: String(localized: "Keep maximized windows above the taskbar"), action: #selector(toggleWindowLift), keyEquivalent: "")
     private let nativeDockSliderView: PreferenceSliderMenuItemView
     private let edgeSliderView: PreferenceSliderMenuItemView
     /// Hat and row of the taskbar height slider; the same value as the grip on the bar.
     private let taskbarSizeSectionItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-    private let taskbarSizeSliderView = TaskbarSizeMenuItemView(accessibilityTitle: String(localized: "Taskbar Size"))
+    private let taskbarSizeSliderView = TaskbarSizeMenuItemView(
+        accessibilityTitle: String(localized: "Taskbar Size"),
+        range: DockPanelHeight.minimum...DockPanelHeight.maximum
+    )
+    private let titleWidthSectionItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+    private let titleWidthSliderView = TaskbarSizeMenuItemView(
+        accessibilityTitle: String(localized: "Maximum Window Chip Width"),
+        range: WindowTitleTextMetrics.minimumWidth...WindowTitleTextMetrics.maximumWidth
+    )
 
     init(store: AppSettingsStore,
          settingsCoordinator: SettingsCoordinator,
@@ -216,12 +226,23 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         taskbarSizeSliderView.onEditingChanged = { [weak self] editing in
             self?.settingsCoordinator.setTaskbarHeightEditing(editing)
         }
-        taskbarSizeSliderView.onHeightChange = { [weak self] height in
-            self?.settingsCoordinator.setTaskbarHeight(height)
+        taskbarSizeSliderView.onValueChange = { [weak self] value in
+            self?.settingsCoordinator.setTaskbarHeight(DockPanelHeight(clamping: value))
         }
         let taskbarSizeItem = NSMenuItem()
         taskbarSizeItem.view = taskbarSizeSliderView
         menu.addItem(taskbarSizeItem)
+
+        // 本次复用大小滑块行，在 Dock 栏大小下方调节标题文字上限（40–140pt）；数值只供辅助功能读取。
+        titleWidthSectionItem.attributedTitle = Self.sectionTitle(String(localized: "Maximum Window Chip Width"))
+        titleWidthSectionItem.isEnabled = false
+        menu.addItem(titleWidthSectionItem)
+        titleWidthSliderView.onValueChange = { [weak store] value in
+            store?.setTitleMaximumWidth(value)
+        }
+        let titleWidthItem = NSMenuItem()
+        titleWidthItem.view = titleWidthSliderView
+        menu.addItem(titleWidthItem)
         menu.addItem(.separator())
 
         nativeDockSectionItem.attributedTitle = Self.sectionTitle(AutoHideToggleMenuModel.nativeDockSectionTitle)
@@ -262,10 +283,13 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
         // 四个开关。设置窗口里它们各带一行灰色说明，菜单里没有副标题的位置，
         // 说明随搬家一并删除（owner 2026-09-01 拍板接受这个代价）。
+        // 本次在「显示废纸篓」和「鼠标悬停显示应用名」之间新增「固定宽度」。
         showShelfItem.target = self
         menu.addItem(showShelfItem)
         showTrashItem.target = self
         menu.addItem(showTrashItem)
+        fixedWidthItem.target = self
+        menu.addItem(fixedWidthItem)
         hoverNameItem.target = self
         menu.addItem(hoverNameItem)
         windowLiftItem.target = self
@@ -370,7 +394,8 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         nativeDockSliderView.sync(delay: store.nativeDockAutoHideDelay)
         nativeDockApplyItem.isHidden = true
         edgeSliderView.sync(delay: store.edgeAutoHideDelay)
-        taskbarSizeSliderView.sync(height: store.dockPanelHeight)
+        taskbarSizeSliderView.sync(value: store.dockPanelHeight.points)
+        titleWidthSliderView.sync(value: store.titleMaximumWidth)
         refreshEdgeSectionTitle()
         rebuildTaskbarScreenMenu()
     }
@@ -494,9 +519,17 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
     /// 钨极组四项的勾选。**只改 `state`，不增删行也不翻 `isHidden`**，
     /// 所以菜单开着时调用也安全（不受 `allowsLayoutChange` 约束）。
+    /// 本次同时刷新新增「固定宽度」的勾选状态。
+    /// 本次按固定状态切换窗口卡片宽度标题及辅助功能名称，不增删菜单行。
     private func refreshTaskbarPreferenceStates() {
         showShelfItem.state = store.showShelf ? .on : .off
         showTrashItem.state = store.showTrash ? .on : .off
+        fixedWidthItem.state = store.titleFixedWidth ? .on : .off
+        let widthTitle = store.titleFixedWidth
+            ? String(localized: "Window Chip Width")
+            : String(localized: "Maximum Window Chip Width")
+        titleWidthSectionItem.attributedTitle = Self.sectionTitle(widthTitle)
+        titleWidthSliderView.updateAccessibilityTitle(widthTitle)
         hoverNameItem.state = store.hoverStyle.isExpressive ? .on : .off
         windowLiftItem.state = store.windowLiftEnabled ? .on : .off
     }
@@ -697,6 +730,11 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
     @objc private func toggleShowTrash() {
         store.setShowTrash(!store.showTrash)
+        refreshCheckmarks()
+    }
+
+    @objc private func toggleTitleFixedWidth() {
+        store.setTitleFixedWidth(!store.titleFixedWidth)
         refreshCheckmarks()
     }
 

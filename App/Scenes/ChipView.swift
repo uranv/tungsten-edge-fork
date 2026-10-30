@@ -48,6 +48,7 @@ struct ChipView: View {
     @EnvironmentObject var messagingStore: MessagingAppStore
     @EnvironmentObject var keptAppStore: KeptAppStore
     @EnvironmentObject var appMembershipController: AppMembershipController
+    @EnvironmentObject private var settingsStore: AppSettingsStore
     @Environment(\.colorScheme) private var colorScheme
     private var theme: DockThemeTokens { .resolved(for: colorScheme) }
     let item: StripItem
@@ -344,7 +345,9 @@ struct ChipView: View {
         // 宽度用渲染药丸的同一个 `ChipPillMetrics.width`，不另写一份。
         .chipQuietHoverScale(
             quietHoverFeedback,
-            cardWidth: ChipPillMetrics.width(title: capturedDisplayTitle, scale: scale)
+            cardWidth: ChipPillMetrics.width(title: capturedDisplayTitle, scale: scale,
+                                            fixedWidth: settingsStore.titleFixedWidth,
+                                            maximumWidth: settingsStore.titleMaximumWidth)
                 + 2 * ChipPillMetrics.titledCardInset * scale,
             scale: scale
         )
@@ -363,6 +366,7 @@ struct ChipView: View {
         .nativeContextMenu { buildChipMenu() }
         // 标签在 140pt 处截断，而这张卡上的标题还去掉了应用名后缀——完整标题只剩这一个出口。
         // （悬停气泡不算：它显示的是应用名，而且新装用户默认是 `.quiet`、根本没有气泡。）
+        // 本次将原 140pt 上限改为用户设置的 40–140pt（随 scale 缩放），完整标题仍由 .help 提供。
         .help(capturedFullTitle)
     }
 
@@ -389,15 +393,19 @@ struct ChipView: View {
     ///   否则动画途中每一帧都在重算省略号、末尾抖动。
     /// `.clipped()` 只裁到盒子的当前宽度：变长时新字从图标那侧逐帧露出来，变短时旧字被收进去。
     private func titleLabel(_ title: String, color: Color) -> some View {
-        let boxWidth = ChipPillMetrics.labelWidth(title: title, scale: scale)
-        let truncates = ChipPillMetrics.labelTruncates(title: title, scale: scale)
+        let boxWidth = ChipPillMetrics.labelWidth(title: title, scale: scale,
+                                                 fixedWidth: settingsStore.titleFixedWidth,
+                                                 maximumWidth: settingsStore.titleMaximumWidth)
+        let truncates = ChipPillMetrics.labelTruncates(title: title, scale: scale,
+                                                      maximumWidth: settingsStore.titleMaximumWidth)
         return LabelBoxWidthDriver(width: boxWidth, chipID: item.id) { liveWidth in ZStack(alignment: .leading) {
             Text(title)
                 .font(.system(size: max(10, 12 * scale), weight: .medium, design: .rounded))
                 .foregroundStyle(color)
                 .lineLimit(1)
-                .frame(width: truncates ? WindowTitleTextMetrics.maximumWidth(for: scale) : nil,
-                       alignment: .leading)
+                .frame(width: truncates ? WindowTitleTextMetrics.maximumWidth(
+                    for: scale, maximumWidth: settingsStore.titleMaximumWidth
+                ) : nil, alignment: .leading)
                 .fixedSize(horizontal: !truncates, vertical: false)
                 .id(title)
                 .transition(.asymmetric(
